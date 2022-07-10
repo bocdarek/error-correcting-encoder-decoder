@@ -59,9 +59,7 @@ public class Decoder {
         System.out.println("correct: " + String.join(" ", correctedTextBin));
         List<String> decodedTextBin = decodeBytes(correctedTextBin);
         System.out.println("decode: " + String.join(" ", decodedTextBin));
-        List<String> decodedTextWithoutTail = removeTail(decodedTextBin);
-        System.out.println("remove: " + String.join(" ", removeTail(decodedTextBin)));
-        String decodedTextHex = converter.hexViewFromBinary(decodedTextWithoutTail);
+        String decodedTextHex = converter.hexViewFromBinary(decodedTextBin);
         System.out.println("hex view: " + decodedTextHex);
         String decodedText = converter.hexViewToText(decodedTextHex);
         System.out.println("text view: " + decodedText);
@@ -95,34 +93,31 @@ public class Decoder {
         binaryView = binaryView.replace(" ", "");
         List<String> expandedList = new ArrayList<>();
         while (binaryView.length() > 3) {
-            expandedList.add("" + binaryView.charAt(0) + binaryView.charAt(0)
-                                + binaryView.charAt(1) + binaryView.charAt(1)
-                                + binaryView.charAt(2) + binaryView.charAt(2)
-                                + "..");
-            binaryView = binaryView.substring(3);
+            expandedList.add(".." + binaryView.charAt(0) + "." + binaryView.charAt(1)
+                    + binaryView.charAt(2) + binaryView.charAt(3) + ".");
+            binaryView = binaryView.substring(4);
         }
-        StringBuilder lastElement = new StringBuilder();
-        for (int i = 0; i < binaryView.length(); i++) {
-            lastElement.append(binaryView.charAt(i)).append(binaryView.charAt(i));
-        }
-        lastElement.append(".".repeat(8 - 2 * binaryView.length()));
-        expandedList.add(lastElement.toString());
         return expandedList;
     }
 
     private List<String> createParityView(List<String> expandedView) {
-        String lastElement = expandedView.get(expandedView.size() - 1).replace(".", "");
-        lastElement = lastElement + "0".repeat(6 - lastElement.length()) + "..";
-        expandedView.set(expandedView.size() - 1, lastElement);
         List<String> parityView = new ArrayList<>();
         for (String str : expandedView) {
-            int sum = Integer.parseInt(str.charAt(0) + "")
-                    + Integer.parseInt(str.charAt(2) + "")
-                    + Integer.parseInt(str.charAt(4) + "");
-            String newStr = str.substring(0, 6) + (sum % 2 == 0 ? "00" : "11");
-            parityView.add(newStr);
+            char parityBit1 = calculateParityBit(str, 2, 4, 6);
+            char parityBit2 = calculateParityBit(str, 2, 5, 6);
+            char parityBit3 = calculateParityBit(str, 4, 5, 6);
+            String sb = String.valueOf(parityBit1) + parityBit2 + str.charAt(2)
+                    + parityBit3 + str.substring(4, 7) + 0;
+            parityView.add(sb);
         }
         return parityView;
+    }
+
+    private char calculateParityBit(String str, int a, int b, int c) {
+        int sum = Integer.parseInt(str.charAt(a) + "")
+                 + Integer.parseInt(str.charAt(b) + "")
+                 + Integer.parseInt(str.charAt(c) + "");
+        return (sum % 2 == 1) ? '1' : '0';
     }
 
     private void saveBytesToFile(String hexText, File file) {
@@ -155,7 +150,7 @@ public class Decoder {
 
     private String injectBinaryNoise(String num) {
         char[] bitChar = num.toCharArray();
-        int index = rd.nextInt(bitChar.length);
+        int index = rd.nextInt(bitChar.length - 1);
         bitChar[index] = bitChar[index] == '0' ? '1' : '0';
         return String.valueOf(bitChar);
     }
@@ -171,68 +166,42 @@ public class Decoder {
 
     private String removeNoise(String binText) {
         char[] bitArray = binText.toCharArray();
-        if (bitArray[6] != bitArray[7]) {
-            int sum = Integer.parseInt(bitArray[0] + "")
-                    + Integer.parseInt(bitArray[2] + "")
-                    + Integer.parseInt(bitArray[4] + "");
-            bitArray[6] = (sum % 2 == 0) ? '0' : '1';
-            bitArray[7] = bitArray[6];
-            return String.valueOf(bitArray);
+        int controlSum1 = calculateControlSum(bitArray, 0, 2, 4, 6);
+        int controlSum2 = calculateControlSum(bitArray, 1, 2, 5, 6);
+        int controlSum4 = calculateControlSum(bitArray, 3, 4, 5, 6);
+        int corruptedBit = -1;
+        if (controlSum1 % 2 != 0) {
+            corruptedBit += 1;
         }
-        int corruptedPair = 0;
-        for (int i = 0; i < 6; i += 2) {
-            if (bitArray[i] != bitArray[i + 1]) {
-                corruptedPair = i / 2;
-            }
+        if (controlSum2 % 2 != 0) {
+            corruptedBit += 2;
         }
-        int partialSum = 0;
-        for (int i = 0; i < 3; i++) {
-            if (i == corruptedPair) {
-                continue;
-            }
-            partialSum += Integer.parseInt(bitArray[2 * i] + "");
+        if (controlSum4 % 2 != 0) {
+            corruptedBit += 4;
         }
-        char correctChar;
-        if (partialSum % 2 == 0) {
-            correctChar = bitArray[6];
-        } else {
-            correctChar = (bitArray[6] == '1') ? '0' : '1';
+        if (corruptedBit != -1) {
+            bitArray[corruptedBit] = (bitArray[corruptedBit] == '0' ? '1' : '0');
         }
-        bitArray[2 *corruptedPair] = correctChar;
-        bitArray[2 *corruptedPair + 1] = correctChar;
         return String.valueOf(bitArray);
     }
 
-    private List<String> decodeBytes(List<String> encodedText) {
-        for (int i = 0; i < encodedText.size(); i++) {
-            encodedText.set(i, encodedText.get(i).substring(0, 6));
-        }
-        String bitStream = String.join("", encodedText);
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < bitStream.length(); i += 2) {
-            sb.append(bitStream.charAt(i));
-        }
-        bitStream = sb.toString();
+    private int calculateControlSum(char[] bitArray, int a, int b, int c, int d) {
+        return Integer.parseInt(bitArray[a] + "") + Integer.parseInt(bitArray[b] + "")
+                + Integer.parseInt(bitArray[c] + "") + Integer.parseInt(bitArray[d] + "");
+    }
 
+    private List<String> decodeBytes(List<String> encodedText) {
         List<String> decodedBytes = new ArrayList<>();
-        StringBuilder nextByte = new StringBuilder();
-        int length = bitStream.length();
-        nextByte.append(bitStream.charAt(0));
-        for (int i = 1; i < length; i++) {
-            if (i % 8 == 0) {
-                decodedBytes.add(nextByte.toString());
-                nextByte = new StringBuilder();
-            }
-            nextByte.append(bitStream.charAt(i));
+        for (int i = 0; i < encodedText.size(); i += 2) {
+            String byte1 = encodedText.get(i);
+            String byte2 = encodedText.get(i + 1);
+            decodedBytes.add(parseByteFromTwo(byte1, byte2));
         }
-        decodedBytes.add(nextByte.toString());
         return decodedBytes;
     }
 
-    private List<String> removeTail(List<String> bytes) {
-        if (bytes.get(bytes.size() - 1).length() < 8) {
-            bytes.remove(bytes.size() - 1);
-        }
-        return bytes;
+    private String parseByteFromTwo(String byte1, String byte2) {
+        return "" + byte1.charAt(2) + byte1.charAt(4) + byte1.charAt(5) + byte1.charAt(6)
+                + byte2.charAt(2) + byte2.charAt(4) + byte2.charAt(5) + byte2.charAt(6);
     }
 }
